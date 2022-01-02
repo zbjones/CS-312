@@ -1,0 +1,194 @@
+    def __init__(self):
+        pass
+
+    # This is the method called by the GUI.  _seq1_ and _seq2_ are two sequences to be aligned, _banded_ is a boolean that tells
+    # you whether you should compute a banded alignment or full alignment, and _align_length_ tells you
+    # how many base pairs to use in computing the alignment
+
+    def align(self, seq1, seq2, banded, align_length):
+        self.banded = banded
+        self.MaxCharactersToAlign = align_length
+
+        if not self.banded:
+            score, alignment1, alignment2 = self.compute_alignment(seq1, seq2)
+        else:
+            score, alignment1, alignment2 = self.compute_alignment_banded(seq1, seq2)
+
+        alignment1 = alignment1.format(len(seq1), align_length, ',BANDED' if banded else '')
+        alignment2 = alignment2.format(len(seq2), align_length, ',BANDED' if banded else '')
+
+        return {'align_cost': score, 'seqi_first100': alignment1, 'seqj_first100': alignment2}
+
+    def compute_alignment_banded(self, upper_seq, left_seq):
+        columns = min(len(upper_seq), self.MaxCharactersToAlign) + 1
+        rows = min(len(left_seq), self.MaxCharactersToAlign) + 1
+
+        upper_seq = upper_seq[:self.MaxCharactersToAlign]
+        left_seq = left_seq[:self.MaxCharactersToAlign]
+
+        difference = abs(len(upper_seq) - len(left_seq))
+
+        # Quit on sequences of length differences longer than we can manage (3)
+        if abs(columns - rows) > MAXINDELS:
+            alignment1 = "No Alignment Possible"
+            alignment2 = "No Alignment Possible"
+            return math.inf, alignment1, alignment2
+
+        if len(left_seq) < len(upper_seq):
+            rows = len(left_seq) + difference + 1
+            upper_seq, left_seq = left_seq, upper_seq
+        else:
+            # Update the rows with the difference O(1)
+            rows = len(upper_seq) + 1 + difference
+
+        # Set the columns equal to the bandwidth O(1)
+        columns = (2*MAXINDELS) + 1
+
+        dp_table = [[(math.inf, "empty") for x in range(columns)] for y in range(rows)]
+
+        dp_table[0][3] = (0, "empty")
+
+        for i in range(1, MAXINDELS + 1):
+            val = (INDEL * i)
+            dp_table[0][i + MAXINDELS] = (val, "side")
+        for i in range(1, MAXINDELS + 1):
+            val = (INDEL * i)
+            dp_table[i][MAXINDELS - i] = (val, "top")
+
+        # Total time and space complexity is O(kn)
+        # O(n) where n is the number of letters in the shorter sequence
+        for i in range(0, rows):
+            # O(k) where k is the number of columns, which is only the BANDWIDTH of 7
+            for j in range(0, columns):
+                # Check to see if the matrix still has the arbitrary initial value of 54321.12345 O(1)
+                if dp_table[i][j][1] == "empty":
+                    # Set the current score to math.inf O(1)
+                    nw_value = math.inf
+                    # Check to see where we are in the matrix and update the corresponding score values O(1)
+                    if j == 0:
+                        # Top, side, and corner scores in the matrix relative to matrix[i][j] O(1)
+                        top = dp_table[i - 1][j + 1][0]
+                        side = math.inf
+                        corner = dp_table[i - 1][j][0]
+                    elif j == 6:
+                        # Top, side, and corner scores in the matrix relative to matrix[i][j] O(1)
+                        top = math.inf
+                        side = dp_table[i][j - 1][0]
+                        corner = dp_table[i - 1][j][0]
+                    else:
+                        # Top, side, and corner scores in the matrix relative to matrix[i][j] O(1)
+                        top = dp_table[i - 1][j + 1][0]
+                        side = dp_table[i][j - 1][0]
+                        corner = dp_table[i - 1][j][0]
+
+                    # If the corner score isn't math.inf O(1)
+                    if corner != math.inf:
+                        # Set the current matrix position to math.inf O(1)
+                        if i - (4 - j) > len(upper_seq) - 1:
+                            origin = dp_table[i][j][1]
+                            dp_table[i][j] = (math.inf, origin)
+                            # Skip to the next iteration in the for loop O(1)
+                            continue
+                        # Otherwise, check to see if we have a match O(1)
+                        else:
+                            # If they do, update the score with the MATCH value O(1)
+                            if upper_seq[i - (4 - j)] == left_seq[i - 1]:
+                                nw_value = corner + MATCH  # O(1)
+                                dp_table[i][j] = (dp_table[i][j][0], "corner")
+                            # Otherwise, update the score with the SUB value O(1)
+                            else:
+                                nw_value = corner + SUB  # O(1)
+                                dp_table[i][j] = (nw_value, "corner")
+
+                    # If the side score isn't math.inf O(1)
+                    if side != math.inf:
+                        # Set the score to the correct minimum for the side position O(1)
+                        if (side + INDEL) < nw_value:
+                            nw_value = side + INDEL
+                            dp_table[i][j] = (nw_value, "side")
+
+                    # If the top score isn't math.inf O(1)
+                    if top != math.inf:
+                        # Set the score to the correct minimum for the top position O(1)
+                        if (top + INDEL) < nw_value:
+                            nw_value = top + INDEL
+                            dp_table[i][j] = (nw_value, "top")
+
+                    # Grab the current origin from the matrix O(1)
+                    origin = dp_table[i][j][1]
+                    # Update the matrix at [i][j] with the new minimum and current origin O(1)
+                    dp_table[i][j] = (nw_value, origin)
+
+        # Set the columns value back to MAXINDELS O(1)
+        columns = MAXINDELS
+
+        # Loops through the columns, which reduces to constant O(1)
+        while dp_table[rows - 1][columns][0] == math.inf:
+            columns -= 1
+
+        # Get the final alignments from the sequences O(kn)
+        alignment1, alignment2 = self.alignment_banded(upper_seq, left_seq, dp_table, rows, columns)
+        # Get the final score from the matrix O(1)
+        nw_value = dp_table[rows - 1][columns][0]
+
+        # Return the final variables O(1)
+        return nw_value, alignment1, alignment2
+
+    # Finds the character-by-character alignment of the two sequences
+    # Time complexity is O(n + m) and space complexity is O(s)
+    # Where n and m are the lengths of the top and side sequences and s is the length of whichever alignment is longer
+    def alignment_banded(self, upper_seq, left_seq, dp_table, rows_len, top_len):
+        # Initial alignments are empty O(1)
+        alignment1 = ""
+        alignment2 = ""
+        # The end value is 100 because we only show the first 100 characters O(1)
+        end = 100
+
+        # This while loop iterates to (O,3) in the matrix O(n + m) at worst case
+        while dp_table[rows_len - 1][top_len][1] != "empty":
+            # Set the source/origin to the second value in the tuple for the current matrix position O(1)
+            origin = dp_table[rows_len - 1][top_len][1]
+
+            # Check to see if there was a match/substitution O(1)
+            if origin == "corner":
+                # Update the alignments O(1)
+                alignment1 = upper_seq[rows_len - (4 - top_len) - 1] + alignment1
+                alignment2 = left_seq[rows_len - 2] + alignment2
+                # Decrement the side position by one (move up one row) O(1)
+                rows_len -= 1
+
+            # Check to see if there was a deletion O(1)
+            elif origin == "side":
+                # Update the alignments O(1)
+                alignment1 = upper_seq[rows_len - (4 - top_len) - 1] + alignment1
+                alignment2 = "-" + alignment2
+                # Decrement the top position by one (move over one column) O(1)
+                top_len -= 1
+
+            # Check to see if there was an insertion O(1)
+            elif origin == "top":
+                # Update the alignments O(1)
+                alignment1 = "-" + alignment1
+                alignment2 = left_seq[rows_len - 2] + alignment2
+                # Increment the top and decrement the side positions by one O(1)
+                top_len += 1
+                rows_len -= 1
+
+        # Check to see if the alignment was updated or not O(1)
+        if alignment1 != "":
+            # Only show the first 100 characters O(1)
+            alignment1 = alignment1[:end]
+        # If the alignment wasn't updated, there is no alignment possible O(1)
+        else:
+            alignment1 = "No Alignment Possible"
+
+        # Check to see if the alignment was updated or not O(1)
+        if alignment2 != "":
+            # Only show the first 100 characters O(1)
+            alignment2 = alignment2[:end]
+        # If the alignment wasn't updated, there is no alignment possible O(1)
+        else:
+            alignment2 = "No Alignment Possible"
+
+        # Return the final correct alignments O(1)
+        return alignment1, alignment2
